@@ -1,8 +1,11 @@
 #!/bin/bash
 
-FILE=$1
+FILES=$@
 
-while read -r LINE; do
-    echo $LINE
-    sleep 1
-done < $FILE
+for FILE in $FILES; do
+    echo "Processing file: $FILE"
+    while read -r LINE; do
+        echo $LINE
+        sleep 1
+    done < $FILE
+done
