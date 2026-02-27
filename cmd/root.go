@@ -29,6 +29,7 @@ func NewRootCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 			var readers []io.Reader
+			var fileNames []string
 			var indent string
 
 			inPlace, _ := cmd.Flags().GetBool("in-place")
@@ -47,6 +48,7 @@ func NewRootCmd() *cobra.Command {
 				readers = append(readers, os.Stdin)
 			} else {
 				for _, fileName := range args {
+					fileNames = append(fileNames, fileName)
 					f, err := os.Open(fileName)
 					if err != nil {
 						return err
@@ -57,10 +59,6 @@ func NewRootCmd() *cobra.Command {
 
 					readers = append(readers, f)
 				}
-			}
-
-			if len(args) != 1 && inPlace {
-				return errors.New("in-place formatting requires a file path (and only one file path)")
 			}
 
 			xPathQuery, singleNode := getXpathQuery(cmd.Flags())
@@ -80,7 +78,35 @@ func NewRootCmd() *cobra.Command {
 			}
 			jsonOutputMode, _ := cmd.Flags().GetBool("json")
 
+			if (xPathQuery != "" || cssQuery != "") && inPlace {
+				return errors.New("in-place formatting is incompatible with nodes selection")
+			}
+
 			pr, pw := io.Pipe()
+
+			if inPlace {
+				for i := range len(fileNames) {
+					var content []byte
+					fileName := fileNames[i]
+					reader := readers[i]
+					pr, pw := io.Pipe()
+
+					go func() {
+						err := processContent(reader, pw, cmd.Flags(), jsonOutputMode, indent, colors)
+						_ = pw.CloseWithError(err)
+					}()
+
+					if content, err = io.ReadAll(pr); err != nil {
+						return err
+					}
+
+					if err = os.WriteFile(fileName, content, 0600); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}
 
 			go func() {
 				defer func() {
@@ -93,22 +119,7 @@ func NewRootCmd() *cobra.Command {
 					} else if cssQuery != "" {
 						err = utils.CSSQuery(reader, pw, cssQuery, cssAttr, options)
 					} else {
-						var contentType utils.ContentType
-						contentType, reader = detectFormat(cmd.Flags(), reader)
-						if jsonOutputMode {
-							err = processAsJSON(cmd.Flags(), reader, pw, contentType)
-						} else {
-							switch contentType {
-							case utils.ContentHtml:
-								err = utils.FormatHtml(reader, pw, indent, colors)
-							case utils.ContentXml:
-								err = utils.FormatXml(reader, pw, indent, colors)
-							case utils.ContentJson:
-								err = utils.FormatJson(reader, pw, indent, colors)
-							default:
-								err = fmt.Errorf("unknown content type: %v", contentType)
-							}
-						}
+						err = processContent(reader, pw, cmd.Flags(), jsonOutputMode, indent, colors)
 					}
 				}
 
@@ -118,20 +129,7 @@ func NewRootCmd() *cobra.Command {
 				}
 			}()
 
-			if inPlace {
-				var path = args[0]
-				var content []byte
-				if content, err = io.ReadAll(pr); err != nil {
-					return err
-				}
-				if err = os.WriteFile(path, content, 0600); err != nil {
-					return err
-				}
-
-				return nil
-			} else {
-				return utils.PagerPrint(pr, cmd.OutOrStdout())
-			}
+			return utils.PagerPrint(pr, cmd.OutOrStdout())
 		},
 	}
 }
@@ -255,6 +253,30 @@ func detectFormat(flags *pflag.FlagSet, origReader io.Reader) (utils.ContentType
 	}
 
 	return utils.ContentXml, reader
+}
+
+func processContent(reader io.Reader, pw io.Writer, flags *pflag.FlagSet, jsonOutputMode bool, indent string, colors int) error {
+	var err error
+	var contentType utils.ContentType
+
+	contentType, reader = detectFormat(flags, reader)
+
+	if jsonOutputMode {
+		err = processAsJSON(flags, reader, pw, contentType)
+	} else {
+		switch contentType {
+		case utils.ContentHtml:
+			err = utils.FormatHtml(reader, pw, indent, colors)
+		case utils.ContentXml:
+			err = utils.FormatXml(reader, pw, indent, colors)
+		case utils.ContentJson:
+			err = utils.FormatJson(reader, pw, indent, colors)
+		default:
+			err = fmt.Errorf("unknown content type: %v", contentType)
+		}
+	}
+
+	return err
 }
 
 func processAsJSON(flags *pflag.FlagSet, reader io.Reader, w io.Writer, contentType utils.ContentType) error {
