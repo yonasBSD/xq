@@ -38,6 +38,18 @@ HTML content can be formatted and highlighted as well (using `-m` flag):
 xq -m test/data/html/formatted.html
 ```
 
+Format multiple files at once:
+
+```
+xq test/data/xml/unformatted.xml test/data/xml/unformatted2.xml
+```
+
+In place formatting is supported as well (using `-i` flag):
+
+```
+xq -i test/data/xml/unformatted.xml
+```
+
 It is possible to extract the content using XPath query language.
 `-x` parameter accepts XPath expression.
 
